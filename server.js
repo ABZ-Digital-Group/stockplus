@@ -2,6 +2,8 @@
 const bcrypt = require('bcrypt');
 const saltRounds = 10;
 
+const PORT = process.env.PORT || 3000;
+
 // FILE UPLOAD SETUP
 const multer = require('multer');
 const path = require('path');
@@ -66,9 +68,12 @@ async function connectDB(){
     await client.connect();
     console.log('✅ Connected Successfully to Server');
     db = client.db(dbname);
-    app.listen(3000);
-    console.log(`✅ StockPlus server listening on Port: 3000`);
+    app.listen(PORT, () => {
+        console.log(`✅ StockPlus server listening on Port: ${PORT}`);
+    });
+    
 };
+
 
 
 // =================================================================
@@ -518,12 +523,12 @@ const cron = require('node-cron');
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-    host: "smtp.hostinger.com",
-    port: 465,
+    host: process.env.SMTP_HOST,
+    port: process.env.SMTP_PORT,
     secure: true,
     auth: {
-        user: 'info@stockplus.abzdigitalgroup.com',
-        pass: 'jtdhJ35j26Mfg?2' // IMPORTANT: Use environment variables for this in production
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS // IMPORTANT: Use environment variables for this in production
     }
 });
 
