@@ -30,21 +30,21 @@ Libraries: JsBarcode (Label generation), HTML5-QRCode (Camera scanning)
 
 Clone the repository:
 
-git clone [https://github.com/ABZ-Digital-Group/stockplus.git](https://github.com/ABZ-Digital-Group/stockplus.git)
+  git clone [https://github.com/ABZ-Digital-Group/stockplus.git](https://github.com/ABZ-Digital-Group/stockplus.git)
 
 
 Navigate to the project directory:
 
-cd stockplus
+  cd stockplus
 
 
 Install the required dependencies:
 
-npm install
+  npm install
 
 
 Set up your environment variables (e.g., MongoDB URI, Email credentials).
 
 Start the application:
 
-npm start
+  npm start
