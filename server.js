@@ -1,24 +1,36 @@
-// BCRYPT SETUP - Pure JS version for Hostinger compatibility
+// BCRYPT SETUP - Using bcryptjs to avoid C++ compilation errors on Hostinger
 const bcrypt = require('bcryptjs');
 const saltRounds = 10;
 
-// PORT SETUP - Dynamic port for Hostinger/Passenger
+// PORT SETUP - Let Hostinger/Passenger provide the port. 
 const PORT = process.env.PORT || 3000;
 
-// FILE UPLOAD SETUP
+// FILE SYSTEM & UPLOAD SETUP
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs'); // Added for folder checking
+const fs = require('fs'); 
 const xlsx = require('xlsx');
 
-// ENSURE NECESSARY FOLDERS EXIST (Prevents crashes on startup)
-const uploadDir = path.join(__dirname, 'public', 'images');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
+// 📁 DIRECTORY SAFETY CHECK
+// Passenger requires a 'tmp' folder to manage restarts, and we need 'images' for uploads.
+const requiredFolders = [
+    path.join(__dirname, 'public', 'images'),
+    path.join(__dirname, 'tmp') 
+];
+
+requiredFolders.forEach(dir => {
+    if (!fs.existsSync(dir)) {
+        try {
+            fs.mkdirSync(dir, { recursive: true });
+            console.log(`✅ Created missing directory: ${dir}`);
+        } catch (err) {
+            console.error(`❌ Error creating directory ${dir}:`, err.message);
+        }
+    }
+});
 
 const imageStorage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
+    destination: (req, file, cb) => cb(null, path.join(__dirname, 'public', 'images')),
     filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
 });
 const imageUpload = multer({ storage: imageStorage });
@@ -28,13 +40,12 @@ const excelImport = multer({ storage: multer.memoryStorage() });
 const MongoClient = require('mongodb-legacy').MongoClient;
 const { ObjectId } = require('mongodb-legacy');
 
-// Fallback to local only if Environment Variable is missing
-// IMPORTANT: Ensure there are no quotes around your string in the Hostinger Dashboard
+// Prioritize Hostinger Environment Variable, fallback to local for development
 const url = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const client = new MongoClient(url);
 const dbname = 'stockplus';
 
-// EXPRESS SETUP
+// EXPRESS & MIDDLEWARE SETUP
 const express = require('express');
 const session = require('express-session');
 const flash = require('connect-flash');
@@ -42,7 +53,7 @@ const bodyParser = require('body-parser');
 const app = express();
 
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'stockplus-local-secret',
+    secret: process.env.SESSION_SECRET || 'stockplus-fallback-secret',
     resave: false,
     saveUninitialized: false
 }));
@@ -54,7 +65,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(flash());
 
-// Middleware: Pass session data to templates
+// Pass session/flash data to all views
 app.use((req, res, next) => {
     res.locals.success_msg = req.flash('success_msg');
     res.locals.error_msg = req.flash('error_msg');
@@ -64,35 +75,36 @@ app.use((req, res, next) => {
     next();
 });
 
-// --- DATABASE CONNECTION ---
+// --- SERVER STARTUP ---
+// CRITICAL: We start listening immediately so Hostinger doesn't time out (503).
 let db = null; 
+
+app.listen(PORT, () => {
+    console.log(`🚀 StockPlus server is live on Port: ${PORT}`);
+    // Now connect to the database in the background
+    connectDB();
+});
 
 async function connectDB() {
     try {
-        console.log('Attempting to connect to MongoDB Atlas...');
+        const maskedUrl = url.replace(/:([^:@]{1,})@/, ':****@');
+        console.log(`Attempting connection to: ${maskedUrl}`);
+        
         await client.connect();
         db = client.db(dbname);
         console.log('✅ Connected Successfully to MongoDB Atlas');
     } catch (err) {
-        console.error('❌ CRITICAL DATABASE ERROR:', err.message);
+        console.error('❌ DATABASE CONNECTION FAILED:', err.message);
     }
 }
-
-// Start the database connection in the background
-connectDB();
-
-// START SERVER IMMEDIATELY (Crucial to prevent 503 errors on Hostinger)
-app.listen(PORT, () => {
-    console.log(`🚀 StockPlus server listening on Port: ${PORT}`);
-});
 
 // =================================================================
 // --- ROUTES ---
 // =================================================================
 
-// HEALTH CHECK (Test this if you get a 503!)
+// 🛰️ HEALTH CHECK ROUTE
 app.get('/ping', (req, res) => {
-    res.send(`Server is alive! Database status: ${db ? 'Connected' : 'Connecting...'}`);
+    res.send(`Server is alive! DB Connected: ${db !== null}`);
 });
 
 // INDEX
@@ -102,10 +114,10 @@ app.get('/', (req, res) => {
 
 const LOW_STOCK_THRESHOLD = 5;
 
-// DASHBOARD (With database safety check)
+// DASHBOARD
 app.get('/dashboard', async (req, res) => {
     if (!req.session.loggedin) return res.redirect('/');
-    if (!db) return res.status(503).send("Database connecting... please refresh in 5 seconds.");
+    if (!db) return res.status(503).send("Database connecting... please refresh in a few seconds.");
 
     try {
         const totalStock = await db.collection('stock').countDocuments();
@@ -115,34 +127,27 @@ app.get('/dashboard', async (req, res) => {
 
         res.render('pages/dashboard', {
             page: 'dashboard',
-            totalStock,
-            totalDocuments,
-            totalUsers,
-            lowStockItems,
-            LOW_STOCK_THRESHOLD
+            totalStock, totalDocuments, totalUsers, lowStockItems, LOW_STOCK_THRESHOLD
         });
     } catch (err) {
-        console.error("Dashboard error:", err);
-        res.status(500).send("Error loading dashboard data.");
+        res.status(500).send("Error loading dashboard.");
     }
 });
 
 // DOCUMENTS LIST
 app.get('/documents', async (req, res) => {
-    if (!req.session.loggedin) return res.redirect('/');
-    if (!db) return res.status(503).send("Database connecting...");
+    if (!req.session.loggedin || !db) return res.redirect('/');
     try {
         const docs = await db.collection('documents').find().sort({ "published": -1 }).toArray();
         res.render('pages/documents', { page: 'documents', documents: docs });
     } catch (err) {
-        res.status(500).send("Error loading documents.");
+        res.status(500).send("Error fetching documents.");
     }
 });
 
-// STOCK LISTING (SEARCH & PAGINATION)
+// STOCK MANAGEMENT (SEARCH & PAGINATION)
 app.get('/document/:id/stock', async (req, res) => {
-    if (!req.session.loggedin) return res.redirect('/');
-    if (!db) return res.status(503).send("Database connecting...");
+    if (!req.session.loggedin || !db) return res.redirect('/');
 
     const documentId = req.params.id;
     const itemsPerPage = 20;
@@ -181,31 +186,9 @@ app.get('/document/:id/stock', async (req, res) => {
     }
 });
 
-// USERS
-app.get('/users', async (req, res) => {
-    if (!req.session.loggedin || req.session.accountType !== 'Admin') return res.redirect('/');
-    if (!db) return res.status(503).send("Database connecting...");
-    try {
-        const users = await db.collection('users').find().sort({ "created": -1 }).toArray();
-        res.render('pages/users', { page: 'users', users });
-    } catch (err) {
-        res.status(500).send("Error loading users.");
-    }
-});
-
-// POS
-app.get('/pos', (req, res) => {
-    if (!req.session.loggedin) return res.redirect('/');
-    res.render('pages/pos');
-});
-
-// =================================================================
-// --- ACTION ROUTES ---
-// =================================================================
-
-// LOGIN
+// LOGIN ACTION
 app.post('/login', async (req, res) => {
-    if (!db) return res.status(503).send("Database connecting...");
+    if (!db) return res.status(503).send("Database not ready.");
     const { username, password } = req.body;
     try {
         const user = await db.collection('users').findOne({ "login.username": username });
@@ -215,7 +198,7 @@ app.post('/login', async (req, res) => {
             req.session.accountType = user.accountType;
             return res.redirect('/dashboard');
         }
-        req.flash('error_msg', 'Invalid credentials');
+        req.flash('error_msg', 'Invalid Username or Password');
         res.redirect('/');
     } catch (err) {
         res.redirect('/');
@@ -227,44 +210,28 @@ app.get('/logout', (req, res) => {
     req.session.destroy(() => res.redirect('/'));
 });
 
-// SIGN UP
+// USER CREATION
 app.post('/signUp', async (req, res) => {
-    if (!db) return res.status(503).send("Database connecting...");
+    if (!db) return res.status(503).send("Database not ready.");
     const { email, uname, psw, accountType } = req.body;
     try {
         const exists = await db.collection('users').findOne({ "login.username": uname });
         if (exists) {
-            req.flash('error_msg', 'User already exists');
+            req.flash('error_msg', 'Username already taken.');
             return res.redirect('/users');
         }
         const hash = await bcrypt.hash(psw, saltRounds);
         await db.collection('users').insertOne({
             email, login: { username: uname, password: hash }, accountType, created: new Date().toISOString()
         });
-        req.flash('success_msg', 'User created');
+        req.flash('success_msg', 'User created successfully.');
         res.redirect('/users');
     } catch (err) {
         res.redirect('/users');
     }
 });
 
-// CREATE DOC
-app.post('/createDoc', async (req, res) => {
-    if (!req.session.loggedin || !db) return res.redirect('/');
-    try {
-        await db.collection('documents').insertOne({
-            documentName: req.body.documentName,
-            labelType: req.body.labelType,
-            published: new Date().toISOString()
-        });
-        req.flash('success_msg', 'Document created');
-        res.redirect('/documents');
-    } catch (err) {
-        res.redirect('/documents');
-    }
-});
-
-// ADD STOCK
+// ADD STOCK ITEM
 app.post('/addStock', imageUpload.single('image'), async (req, res) => {
     if (!req.session.loggedin || !db) return res.redirect('/');
     try {
@@ -281,7 +248,7 @@ app.post('/addStock', imageUpload.single('image'), async (req, res) => {
     }
 });
 
-// UPDATE STOCK
+// UPDATE STOCK ITEM
 app.post('/updateStock', imageUpload.single('image'), async (req, res) => {
     if (!req.session.loggedin || !db) return res.redirect('/');
     const { originalBarcode, documentId, currentPage, productName, productCode, Brand, Category, Qty, RRP, Price, Barcode } = req.body;
@@ -296,7 +263,7 @@ app.post('/updateStock', imageUpload.single('image'), async (req, res) => {
                 qty: parseInt(Qty) || 0, rrp: RRP, price: Price, barcode: Barcode, imageUrl
             }
         });
-        req.flash('success_msg', 'Item updated');
+        req.flash('success_msg', 'Stock updated successfully.');
         res.redirect(`/document/${documentId}/stock?page=${currentPage || 1}#item-${Barcode}`);
     } catch (err) {
         res.redirect(`/document/${documentId}/stock`);
@@ -318,15 +285,15 @@ app.post('/import-stock', excelImport.single('stockFile'), async (req, res) => {
         })).filter(i => i.productName && i.barcode);
 
         if (items.length > 0) await db.collection('stock').insertMany(items);
-        req.flash('success_msg', `Imported ${items.length} items`);
+        req.flash('success_msg', `Successfully imported ${items.length} items.`);
         res.redirect('/documents');
     } catch (err) {
-        req.flash('error_msg', 'Import failed');
+        req.flash('error_msg', 'Excel import failed.');
         res.redirect('/documents');
     }
 });
 
-// DELETE STOCK
+// DELETE ITEM
 app.post('/delete', async (req, res) => {
     if (!req.session.loggedin || !db) return res.redirect('/');
     const { barcode, documentId } = req.body;
@@ -334,22 +301,22 @@ app.post('/delete', async (req, res) => {
     res.redirect(`/document/${documentId}/stock`);
 });
 
-// POS SALE
+// POS SALE PROCESSING
 app.post('/process-sale', async (req, res) => {
-    if (!db) return res.status(503).json({ error: 'DB connecting' });
+    if (!db) return res.status(503).json({ error: 'Database connecting' });
     const { items } = req.body;
     try {
         for (const item of items) {
             await db.collection('stock').updateOne({ barcode: item.barcode }, { $inc: { qty: -item.quantity } });
         }
-        res.json({ message: 'Success' });
+        res.json({ message: 'Sale processed successfully' });
     } catch (err) {
-        res.status(500).json({ error: 'Failed' });
+        res.status(500).json({ error: 'Sale failed' });
     }
 });
 
 // =================================================================
-// --- CRON JOBS ---
+// --- CRON JOBS (Daily Low Stock Report) ---
 // =================================================================
 const cron = require('node-cron');
 const nodemailer = require('nodemailer');
@@ -366,14 +333,18 @@ const transporter = nodemailer.createTransport({
 
 cron.schedule('0 9 * * *', async () => {
     if (!db) return;
-    const items = await db.collection('stock').find({ qty: { $lt: LOW_STOCK_THRESHOLD } }).toArray();
-    if (items.length > 0) {
-        const html = `<ul>${items.map(i => `<li>${i.productName}: ${i.qty}</li>`).join('')}</ul>`;
-        await transporter.sendMail({
-            from: '"StockPlus" <info@stockplus.abzdigitalgroup.com>',
-            to: 'stuspam2025@gmail.com',
-            subject: 'Low Stock Alert',
-            html: html
-        });
+    try {
+        const items = await db.collection('stock').find({ qty: { $lt: LOW_STOCK_THRESHOLD } }).toArray();
+        if (items.length > 0) {
+            const html = `<h2>Low Stock Alert</h2><ul>${items.map(i => `<li>${i.productName}: <b>${i.qty} left</b></li>`).join('')}</ul>`;
+            await transporter.sendMail({
+                from: '"StockPlus" <info@stockplus.abzdigitalgroup.com>',
+                to: 'stuspam2025@gmail.com',
+                subject: 'StockPlus Alert: Low Stock Items',
+                html: html
+            });
+        }
+    } catch (err) {
+        console.error('❌ Cron Job Error:', err.message);
     }
 }, { timezone: "Europe/London" });
