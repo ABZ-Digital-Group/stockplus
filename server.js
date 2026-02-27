@@ -153,23 +153,38 @@ app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/')));
 
 const LOW_STOCK_THRESHOLD = 5;
 
+// FIXED DASHBOARD ROUTE
 app.get('/dashboard', async (req, res) => {
-    if (!req.session.loggedin || !db) return res.redirect('/');
+    // 1. Check Login
+    if (!req.session.loggedin) return res.redirect('/');
+    
+    // 2. Check Database Connection
+    if (!db) {
+        return res.status(503).send(`<h1>Database Connecting</h1><p>The database is still establishing a connection. Status: ${connectionStatus}. Please refresh in 5 seconds.</p>`);
+    }
+
     try {
+        // 3. Fetch Data
         const totalStock = await db.collection('stock').countDocuments();
         const totalDocuments = await db.collection('documents').countDocuments();
         const totalUsers = await db.collection('users').countDocuments();
         const lowStockItems = await db.collection('stock').find({ qty: { $lt: LOW_STOCK_THRESHOLD } }).toArray();
 
+        // 4. Render
         res.render('pages/dashboard', { 
             page: 'dashboard', 
+            user: req.session.currentuser, // Added for template compatibility
             totalStock, 
             totalDocuments, 
             totalUsers, 
             lowStockItems, 
             LOW_STOCK_THRESHOLD 
         });
-    } catch (err) { res.status(500).send("Dashboard Error"); }
+    } catch (err) { 
+        console.error("🔥 Dashboard Rendering Error:", err);
+        // Display the actual error message to the user for debugging
+        res.status(500).send(`<h1>Dashboard Error</h1><p>${err.message}</p><pre>${err.stack}</pre>`); 
+    }
 });
 
 app.get('/documents', async (req, res) => {
@@ -204,7 +219,7 @@ app.post('/delete-document', async (req, res) => {
 });
 
 // =================================================================
-// --- STOCK MANAGEMENT (PAGINATION / SEARCH / FILTER) ---
+// --- STOCK MANAGEMENT ---
 // =================================================================
 
 app.get('/document/:id/stock', async (req, res) => {
@@ -287,7 +302,7 @@ app.post('/delete', async (req, res) => {
 });
 
 // =================================================================
-// --- EXCEL, PRINTING, & POS ---
+// --- EXCEL & POS ---
 // =================================================================
 
 app.post('/import-stock', excelImport.single('stockFile'), async (req, res) => {
