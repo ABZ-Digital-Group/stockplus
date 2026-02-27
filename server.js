@@ -8,10 +8,17 @@ const PORT = process.env.PORT || 3000;
 // FILE UPLOAD SETUP
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs'); // Added for folder checking
 const xlsx = require('xlsx');
 
+// ENSURE NECESSARY FOLDERS EXIST (Prevents crashes on startup)
+const uploadDir = path.join(__dirname, 'public', 'images');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+
 const imageStorage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, './public/images'),
+    destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
 });
 const imageUpload = multer({ storage: imageStorage });
@@ -22,6 +29,7 @@ const MongoClient = require('mongodb-legacy').MongoClient;
 const { ObjectId } = require('mongodb-legacy');
 
 // Fallback to local only if Environment Variable is missing
+// IMPORTANT: Ensure there are no quotes around your string in the Hostinger Dashboard
 const url = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const client = new MongoClient(url);
 const dbname = 'stockplus';
@@ -38,7 +46,8 @@ app.use(session({
     resave: false,
     saveUninitialized: false
 }));
-app.use(express.static('public'));
+
+app.use(express.static(path.join(__dirname, 'public')));
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.json());
 app.set('view engine', 'ejs');
@@ -56,7 +65,7 @@ app.use((req, res, next) => {
 });
 
 // --- DATABASE CONNECTION ---
-let db = null; // Start as null
+let db = null; 
 
 async function connectDB() {
     try {
@@ -66,8 +75,6 @@ async function connectDB() {
         console.log('✅ Connected Successfully to MongoDB Atlas');
     } catch (err) {
         console.error('❌ CRITICAL DATABASE ERROR:', err.message);
-        // We don't exit(1) here because we want the server to stay up 
-        // and show an error message instead of a 503.
     }
 }
 
