@@ -1,24 +1,26 @@
-# FORCE ENVIRONMENT VARIABLES (Solves the "NOT FOUND" issue)
-SetEnv MONGODB_URI mongodb+srv://stuartiek_db_user:Zwq6xp7NR3Ho2W1W@cluster0.blm5m.mongodb.net/stockplus?retryWrites=true&w=majority
+# --- 1. ENVIRONMENT VARIABLES ---
+# FORCE environment variables to bypass Hostinger Dashboard sync issues.
+# Note: If you get ENOTFOUND errors, use the Standard Connection String here.
+SetEnv MONGODB_URI mongodb+srv://stuartiek_db_user:Zwq6xp7NR3Ho2W1W@cluster0.blmfv8d.mongodb.net/stockplus?retryWrites=true&w=majority
 SetEnv SESSION_SECRET stockplus-secure-prod-key
 SetEnv SMTP_HOST smtp.hostinger.com
 SetEnv SMTP_PORT 465
 SetEnv SMTP_USER info@stockplus.abzdigitalgroup.com
 SetEnv SMTP_PASS jtdhJ35j26Mfg?2
 
-# 1. Point to the app in the main folder (Flattened structure)
+# --- 2. NODE.JS / PASSENGER CONFIGURATION ---
+# Point to the app in the main folder (Flattened structure)
 PassengerAppRoot /home/u216291154/domains/stockplus.online
 PassengerAppType node
 PassengerNodejs /opt/alt/alt-nodejs18/root/bin/node
 PassengerStartupFile server.js
 PassengerBaseURI /
 
-# 2. Critical: Point to the tmp folder at the root
+# --- 3. RESTART LOGIC ---
+# Critical: Point to the tmp folder at the root to allow app reboots
 PassengerRestartDir /home/u216291154/domains/stockplus.online/tmp
 
-# 3. Security
+# --- 4. SECURITY RULES ---
+# Prevent access to build logs and hidden folders
+RewriteEngine On
 RewriteRule ^\.builds - [F,L]
-
-# 4. Set ENV
-SetEnv MONGODB_URI mongodb+srv://stuartiek_db_user:Zwq6xp7NR3Ho2W1W@cluster0.blmfv8d.mongodb.net?appName=Cluster0
-SetEnv SESSION_SECRET stockplus-secure-key
