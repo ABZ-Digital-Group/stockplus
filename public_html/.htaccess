@@ -1,3 +1,11 @@
+# Force environment variables (Bypasses Hostinger Dashboard issues)
+SetEnv MONGODB_URI mongodb+srv://stuartiek_db_user:Zwq6xp7NR3Ho2W1W@cluster0.blm5m.mongodb.net/stockplus?retryWrites=true&w=majority
+SetEnv SESSION_SECRET stockplus-secure-prod-key
+SetEnv SMTP_HOST smtp.hostinger.com
+SetEnv SMTP_PORT 465
+SetEnv SMTP_USER info@stockplus.abzdigitalgroup.com
+SetEnv SMTP_PASS jtdhJ35j26Mfg?2
+
 # 1. Point to the app in the main folder (Flattened structure)
 PassengerAppRoot /home/u216291154/domains/stockplus.online
 PassengerAppType node

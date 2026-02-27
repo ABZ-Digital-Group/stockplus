@@ -1,7 +1,7 @@
 /**
- * STOCKPLUS - FULL PRODUCTION SERVER
+ * STOCKPLUS - FULL PRODUCTION SERVER (Final Version)
  * Features: Auth, Pagination, Search, Excel Import, Image Upload, Cron Alerts, POS.
- * Optimized for Hostinger (Ready-First Strategy).
+ * Optimized for Hostinger (Ready-First Strategy & Diagnostic Logic).
  */
 
 const bcrypt = require('bcryptjs'); 
@@ -78,15 +78,16 @@ async function connectDB() {
     
     if (!url) {
         connectionStatus = "Failed";
-        connectionError = "CRITICAL: MONGODB_URI is undefined. Check .htaccess or Hostinger Dashboard.";
+        connectionError = "CRITICAL: MONGODB_URI is undefined. Phusion Passenger is not passing variables. Check .htaccess SetEnv.";
+        console.error("❌ " + connectionError);
         return;
     }
 
     try {
         connectionStatus = "Connecting...";
-        console.log('📡 Attempting Atlas connection...');
+        console.log('📡 Attempting connection to MongoDB Atlas...');
         
-        // Added connectTimeoutMS to prevent indefinite hanging
+        // Added timeouts to prevent hanging connection attempts
         const client = new MongoClient(url, { 
             connectTimeoutMS: 5000, 
             serverSelectionTimeoutMS: 5000 
@@ -110,18 +111,15 @@ async function connectDB() {
 
 app.get('/ping', (req, res) => {
     const envStatus = process.env.MONGODB_URI ? "DETECTED" : "NOT FOUND";
-    const availableKeys = Object.keys(process.env).filter(k => !k.includes('PASS') && !k.includes('URI'));
-    
     res.send(`
         <h1>System Diagnostic</h1>
         <p><b>Server Status:</b> Running</p>
         <p><b>DB Status:</b> ${connectionStatus}</p>
         <p><b>DB Connected:</b> ${db !== null}</p>
         <p><b>MONGODB_URI Variable:</b> ${envStatus}</p>
-        <p><b>Available Env Keys:</b> ${availableKeys.join(', ')}</p>
         <p><b>Error Details:</b> <span style="color:red">${connectionError || 'None'}</span></p>
         <hr>
-        <p><i>Action: If status stays 'Connecting' for a long time and then shows 'Timeout', you MUST add 0.0.0.0/0 to MongoDB Atlas Network Access.</i></p>
+        <p><i>Action: If status is 'NOT FOUND', ensure you have SetEnv MONGODB_URI in your .htaccess file.</i></p>
     `);
 });
 
@@ -221,7 +219,7 @@ app.post('/delete-document', async (req, res) => {
 });
 
 // =================================================================
-// --- STOCK MANAGEMENT ---
+// --- STOCK MANAGEMENT (SEARCH & FILTER) ---
 // =================================================================
 
 app.get('/document/:id/stock', async (req, res) => {
@@ -270,7 +268,7 @@ app.post('/addStock', imageUpload.single('image'), async (req, res) => {
         documentId, published: new Date().toISOString().slice(0, 19)
     };
     await db.collection('stock').insertOne(newItem);
-    res.redirect(`/document/${id}/stock`);
+    res.redirect(`/document/${documentId}/stock`);
 });
 
 app.post('/updateStock', imageUpload.single('image'), async (req, res) => {
@@ -296,7 +294,7 @@ app.post('/delete', async (req, res) => {
 });
 
 // =================================================================
-// --- EXCEL, PRINTING, & POS ---
+// --- EXCEL & POS ROUTES ---
 // =================================================================
 
 app.post('/import-stock', excelImport.single('stockFile'), async (req, res) => {
@@ -341,7 +339,7 @@ app.post('/process-sale', async (req, res) => {
 });
 
 // =================================================================
-// --- AUTOMATED CRON TASKS (Using Env Variables) ---
+// --- CRON & EMAIL TASKS ---
 // =================================================================
 
 const transporter = nodemailer.createTransport({
