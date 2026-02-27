@@ -22,7 +22,6 @@ const PORT = process.env.PORT || 3000;
 const dbname = 'stockplus';
 
 // --- 1. DIRECTORY SETUP ---
-// Ensure folders exist inside the domain root
 const requiredDirs = [
     path.join(__dirname, 'public', 'images'),
     path.join(__dirname, 'tmp')
@@ -54,7 +53,6 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(flash());
 
-// Pass shared variables to EJS
 app.use((req, res, next) => {
     res.locals.success_msg = req.flash('success_msg');
     res.locals.error_msg = req.flash('error_msg');
@@ -75,7 +73,15 @@ app.listen(PORT, () => {
 });
 
 async function connectDB() {
-    const url = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
+    // DIAGNOSTIC: Check if variable exists
+    const url = process.env.MONGODB_URI;
+    
+    if (!url) {
+        connectionError = "CRITICAL: MONGODB_URI environment variable is MISSING in Hostinger Dashboard.";
+        console.error("❌ " + connectionError);
+        return;
+    }
+
     try {
         const client = new MongoClient(url);
         await client.connect();
@@ -83,7 +89,7 @@ async function connectDB() {
         connectionError = null;
         console.log('✅ Connected Successfully to MongoDB Atlas');
     } catch (err) {
-        connectionError = err.message;
+        connectionError = `Atlas Connection Failed: ${err.message}`;
         console.error('❌ MongoDB Connection Error:', err.message);
     }
 }
@@ -93,7 +99,14 @@ async function connectDB() {
 // =================================================================
 
 app.get('/ping', (req, res) => {
-    res.send(`Server Alive. DB Connected: ${db !== null}. Error: ${connectionError || 'None'}`);
+    const envStatus = process.env.MONGODB_URI ? "DETECTED" : "NOT FOUND";
+    res.send(`
+        <h1>System Status</h1>
+        <p><b>Server:</b> Alive</p>
+        <p><b>Database Connected:</b> ${db !== null}</p>
+        <p><b>MONGODB_URI Variable:</b> ${envStatus}</p>
+        <p><b>Error Details:</b> ${connectionError || 'None'}</p>
+    `);
 });
 
 app.get('/', (req, res) => res.render('pages/index'));
@@ -192,7 +205,7 @@ app.post('/delete-document', async (req, res) => {
 });
 
 // =================================================================
-// --- STOCK MANAGEMENT (PAGINATION + SEARCH + FILTER) ---
+// --- STOCK MANAGEMENT ---
 // =================================================================
 
 app.get('/document/:id/stock', async (req, res) => {
@@ -336,5 +349,4 @@ cron.schedule('0 9 * * *', async () => {
     } catch (e) { console.error('Cron Error:', e.message); }
 }, { timezone: "Europe/London" });
 
-// Fatal error prevention
 process.on('uncaughtException', (err) => console.error('🔥 FATAL:', err));
