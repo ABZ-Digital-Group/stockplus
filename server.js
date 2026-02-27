@@ -42,7 +42,7 @@ const excelImport = multer({ storage: multer.memoryStorage() });
 
 // --- 3. MIDDLEWARE ---
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'stockplus-prod-secret-key',
+    secret: process.env.SESSION_SECRET || 'stockplus-fallback-secret',
     resave: false,
     saveUninitialized: false
 }));
@@ -73,11 +73,10 @@ app.listen(PORT, () => {
 });
 
 async function connectDB() {
-    // DIAGNOSTIC: Check if variable exists
     const url = process.env.MONGODB_URI;
     
     if (!url) {
-        connectionError = "CRITICAL: MONGODB_URI environment variable is MISSING in Hostinger Dashboard.";
+        connectionError = "CRITICAL: process.env.MONGODB_URI is undefined. Phusion Passenger is not passing variables.";
         console.error("❌ " + connectionError);
         return;
     }
@@ -99,13 +98,18 @@ async function connectDB() {
 // =================================================================
 
 app.get('/ping', (req, res) => {
-    const envStatus = process.env.MONGODB_URI ? "DETECTED" : "NOT FOUND";
+    const envStatus = process.env.MONGODB_URI ? "DETECTED (Hidden for safety)" : "NOT FOUND";
+    const availableKeys = Object.keys(process.env).filter(k => !k.includes('PASS') && !k.includes('URI'));
+    
     res.send(`
-        <h1>System Status</h1>
-        <p><b>Server:</b> Alive</p>
-        <p><b>Database Connected:</b> ${db !== null}</p>
+        <h1>System Diagnostic</h1>
+        <p><b>Server Status:</b> Running</p>
+        <p><b>DB Connected:</b> ${db !== null}</p>
         <p><b>MONGODB_URI Variable:</b> ${envStatus}</p>
-        <p><b>Error Details:</b> ${connectionError || 'None'}</p>
+        <p><b>Available Env Keys:</b> ${availableKeys.join(', ')}</p>
+        <p><b>Error Details:</b> <span style="color:red">${connectionError || 'None'}</span></p>
+        <hr>
+        <p><i>Tip: If Variable is NOT FOUND, use SetEnv in .htaccess</i></p>
     `);
 });
 
@@ -325,12 +329,17 @@ app.post('/process-sale', async (req, res) => {
 });
 
 // =================================================================
-// --- AUTOMATED CRON TASKS ---
+// --- AUTOMATED CRON TASKS (Using Env Variables) ---
 // =================================================================
 
 const transporter = nodemailer.createTransport({
-    host: "smtp.hostinger.com", port: 465, secure: true,
-    auth: { user: 'info@stockplus.abzdigitalgroup.com', pass: 'jtdhJ35j26Mfg?2' }
+    host: process.env.SMTP_HOST || "smtp.hostinger.com", 
+    port: parseInt(process.env.SMTP_PORT) || 465, 
+    secure: true,
+    auth: { 
+        user: process.env.SMTP_USER || 'info@stockplus.abzdigitalgroup.com', 
+        pass: process.env.SMTP_PASS || 'jtdhJ35j26Mfg?2' 
+    }
 });
 
 cron.schedule('0 9 * * *', async () => {
@@ -340,7 +349,7 @@ cron.schedule('0 9 * * *', async () => {
         if (low.length > 0) {
             const html = `<ul>${low.map(i => `<li>${i.productName}: ${i.qty}</li>`).join('')}</ul>`;
             await transporter.sendMail({
-                from: '"StockPlus Alerts" <info@stockplus.abzdigitalgroup.com>',
+                from: `"StockPlus Alerts" <${process.env.SMTP_USER || 'info@stockplus.abzdigitalgroup.com'}>`,
                 to: 'stuartiek@gmail.com',
                 subject: `🚨 Low Stock Alert - ${low.length} Items`,
                 html: `<h1>Low Stock Report</h1>${html}`

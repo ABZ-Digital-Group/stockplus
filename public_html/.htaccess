@@ -10,3 +10,7 @@ PassengerRestartDir /home/u216291154/domains/stockplus.online/tmp
 
 # 3. Security
 RewriteRule ^\.builds - [F,L]
+
+# 4. Set ENV
+SetEnv MONGODB_URI mongodb+srv://stuartiek_db_user:Zwq6xp7NR3Ho2W1W@cluster0.blmfv8d.mongodb.net?appName=Cluster0
+SetEnv SESSION_SECRET stockplus-secure-key
