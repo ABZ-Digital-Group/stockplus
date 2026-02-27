@@ -65,6 +65,7 @@ app.use((req, res, next) => {
 // --- 4. DATABASE CONNECTION ---
 let db = null;
 let connectionError = null;
+let connectionStatus = "Disconnected";
 
 // 🚀 Ready-First: Start server immediately to pass Hostinger health check
 app.listen(PORT, () => {
@@ -76,18 +77,28 @@ async function connectDB() {
     const url = process.env.MONGODB_URI;
     
     if (!url) {
-        connectionError = "CRITICAL: process.env.MONGODB_URI is undefined. Phusion Passenger is not passing variables.";
-        console.error("❌ " + connectionError);
+        connectionStatus = "Failed";
+        connectionError = "CRITICAL: MONGODB_URI is undefined. Check .htaccess or Hostinger Dashboard.";
         return;
     }
 
     try {
-        const client = new MongoClient(url);
+        connectionStatus = "Connecting...";
+        console.log('📡 Attempting Atlas connection...');
+        
+        // Added connectTimeoutMS to prevent indefinite hanging
+        const client = new MongoClient(url, { 
+            connectTimeoutMS: 5000, 
+            serverSelectionTimeoutMS: 5000 
+        });
+
         await client.connect();
         db = client.db(dbname);
         connectionError = null;
+        connectionStatus = "Connected";
         console.log('✅ Connected Successfully to MongoDB Atlas');
     } catch (err) {
+        connectionStatus = "Error";
         connectionError = `Atlas Connection Failed: ${err.message}`;
         console.error('❌ MongoDB Connection Error:', err.message);
     }
@@ -98,18 +109,19 @@ async function connectDB() {
 // =================================================================
 
 app.get('/ping', (req, res) => {
-    const envStatus = process.env.MONGODB_URI ? "DETECTED (Hidden for safety)" : "NOT FOUND";
+    const envStatus = process.env.MONGODB_URI ? "DETECTED" : "NOT FOUND";
     const availableKeys = Object.keys(process.env).filter(k => !k.includes('PASS') && !k.includes('URI'));
     
     res.send(`
         <h1>System Diagnostic</h1>
         <p><b>Server Status:</b> Running</p>
+        <p><b>DB Status:</b> ${connectionStatus}</p>
         <p><b>DB Connected:</b> ${db !== null}</p>
         <p><b>MONGODB_URI Variable:</b> ${envStatus}</p>
         <p><b>Available Env Keys:</b> ${availableKeys.join(', ')}</p>
         <p><b>Error Details:</b> <span style="color:red">${connectionError || 'None'}</span></p>
         <hr>
-        <p><i>Tip: If Variable is NOT FOUND, use SetEnv in .htaccess</i></p>
+        <p><i>Action: If status stays 'Connecting' for a long time and then shows 'Timeout', you MUST add 0.0.0.0/0 to MongoDB Atlas Network Access.</i></p>
     `);
 });
 
@@ -117,7 +129,7 @@ app.get('/', (req, res) => res.render('pages/index'));
 
 // 🛠️ EMERGENCY SETUP ROUTE
 app.get('/setup-admin', async (req, res) => {
-    if (!db) return res.send(`DB not connected. Error: ${connectionError || 'Connecting...'}`);
+    if (!db) return res.send(`DB not connected. Current Status: ${connectionStatus}. Error: ${connectionError || 'Connecting...'}`);
     const pass = "&99398V4oa&";
     try {
         const hash = await bcrypt.hash(pass, 10);
@@ -134,7 +146,7 @@ app.get('/setup-admin', async (req, res) => {
 
 app.post('/login', async (req, res) => {
     if (!db) {
-        req.flash('error_msg', `Database connecting... ${connectionError || ''}`);
+        req.flash('error_msg', `Database not ready (Status: ${connectionStatus}). ${connectionError || ''}`);
         return res.redirect('/');
     }
     const { username, password } = req.body;
@@ -258,7 +270,7 @@ app.post('/addStock', imageUpload.single('image'), async (req, res) => {
         documentId, published: new Date().toISOString().slice(0, 19)
     };
     await db.collection('stock').insertOne(newItem);
-    res.redirect(`/document/${documentId}/stock`);
+    res.redirect(`/document/${id}/stock`);
 });
 
 app.post('/updateStock', imageUpload.single('image'), async (req, res) => {
