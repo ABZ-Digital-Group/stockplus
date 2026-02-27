@@ -1,6 +1,6 @@
 /**
  * STOCKPLUS - COMPLETE PRODUCTION SERVER
- * Features: Auth, Dashboard, Document Mgmt, Paginated/Filtered Stock, 
+ * Features: Auth, User Mgmt, Dashboard, Document Mgmt, Paginated/Filtered Stock, 
  * Image Uploads, Excel Import, POS API, and Automated Daily Alerts.
  * Optimized for Hostinger.
  */
@@ -76,7 +76,6 @@ app.listen(PORT, () => {
 });
 
 async function connectDB() {
-    // Standard connection string fallback (used if SRV fails)
     const fallbackURI = "mongodb+srv://stuartiek_db_user:Zwq6xp7NR3Ho2W1W@cluster0.blmfv8d.mongodb.net/stockplus?retryWrites=true&w=majority";
     let url = process.env.MONGODB_URI || fallbackURI;
 
@@ -147,33 +146,89 @@ app.post('/login', async (req, res) => {
 
 app.get('/logout', (req, res) => req.session.destroy(() => res.redirect('/')));
 
+// --- USER MANAGEMENT ROUTES ---
+
+app.get('/users', async (req, res) => {
+    if (!req.session.loggedin || req.session.accountType !== 'Admin') {
+        req.flash('error_msg', 'Access denied. Admins only.');
+        return res.redirect('/dashboard');
+    }
+    if (!db) return res.status(503).send("Database connecting...");
+    try {
+        const users = await db.collection('users').find().sort({ "created": -1 }).toArray();
+        res.render('pages/users', { page: 'users', users });
+    } catch (err) {
+        console.error("❌ Error fetching users:", err);
+        res.status(500).send("Error fetching users");
+    }
+});
+
+app.post('/signUp', async (req, res) => {
+    if (!req.session.loggedin || req.session.accountType !== 'Admin') {
+        return res.redirect('/');
+    }
+    const { email, uname, psw, accountType } = req.body;
+    try {
+        const existingUser = await db.collection('users').findOne({ "login.username": uname });
+        if (existingUser) {
+            req.flash('error_msg', 'User already exists.');
+            return res.redirect('/users');
+        }
+        const hash = await bcrypt.hash(psw, 10);
+        await db.collection('users').insertOne({
+            email,
+            login: { username: uname, password: hash },
+            accountType,
+            created: new Date().toISOString().slice(0, 19)
+        });
+        req.flash('success_msg', 'User created successfully.');
+        res.redirect('/users');
+    } catch (err) {
+        console.error("❌ Error creating user:", err);
+        req.flash('error_msg', 'Error creating user.');
+        res.redirect('/users');
+    }
+});
+
+app.post('/delete-user', async (req, res) => {
+    if (!req.session.loggedin || req.session.accountType !== 'Admin') return res.redirect('/');
+    const { userId } = req.body;
+    try {
+        const userToDelete = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+        if (userToDelete && userToDelete.login.username === req.session.currentuser) {
+            req.flash('error_msg', 'You cannot delete your own account.');
+            return res.redirect('/users');
+        }
+        await db.collection('users').deleteOne({ _id: new ObjectId(userId) });
+        req.flash('success_msg', 'User deleted successfully.');
+        res.redirect('/users');
+    } catch (err) {
+        console.error("❌ Error deleting user:", err);
+        res.redirect('/users');
+    }
+});
+
 // =================================================================
 // --- DASHBOARD & DOCUMENTS ---
 // =================================================================
 
 const LOW_STOCK_THRESHOLD = 5;
 
-// FIXED DASHBOARD ROUTE
 app.get('/dashboard', async (req, res) => {
-    // 1. Check Login
     if (!req.session.loggedin) return res.redirect('/');
-    
-    // 2. Check Database Connection
     if (!db) {
         return res.status(503).send(`<h1>Database Connecting</h1><p>The database is still establishing a connection. Status: ${connectionStatus}. Please refresh in 5 seconds.</p>`);
     }
 
     try {
-        // 3. Fetch Data
         const totalStock = await db.collection('stock').countDocuments();
         const totalDocuments = await db.collection('documents').countDocuments();
         const totalUsers = await db.collection('users').countDocuments();
         const lowStockItems = await db.collection('stock').find({ qty: { $lt: LOW_STOCK_THRESHOLD } }).toArray();
 
-        // 4. Render
         res.render('pages/dashboard', { 
             page: 'dashboard', 
-            user: req.session.currentuser, // Added for template compatibility
+            user: req.session.currentuser, 
             totalStock, 
             totalDocuments, 
             totalUsers, 
@@ -182,8 +237,7 @@ app.get('/dashboard', async (req, res) => {
         });
     } catch (err) { 
         console.error("🔥 Dashboard Rendering Error:", err);
-        // Display the actual error message to the user for debugging
-        res.status(500).send(`<h1>Dashboard Error</h1><p>${err.message}</p><pre>${err.stack}</pre>`); 
+        res.status(500).send(`<h1>Dashboard Error</h1><p>${err.message}</p>`); 
     }
 });
 
