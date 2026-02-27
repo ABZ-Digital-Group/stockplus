@@ -66,6 +66,7 @@ app.use((req, res, next) => {
 let db = null;
 let connectionError = null;
 let connectionStatus = "Disconnected";
+let usedFallback = false;
 
 // 🚀 Ready-First: Start server immediately to pass Hostinger health check
 app.listen(PORT, () => {
@@ -74,20 +75,19 @@ app.listen(PORT, () => {
 });
 
 async function connectDB() {
-    const url = process.env.MONGODB_URI;
+    // 🛠️ FALLBACK LOGIC: If Hostinger environment fails, we use this string.
+    const fallbackURI = "mongodb+srv://stuartiek_db_user:Zwq6xp7NR3Ho2W1W@cluster0.blm5m.mongodb.net/stockplus?retryWrites=true&w=majority";
+    
+    let url = process.env.MONGODB_URI;
     
     if (!url) {
-        connectionStatus = "Failed";
-        connectionError = "CRITICAL: MONGODB_URI is undefined. Phusion Passenger is not passing variables. Check .htaccess SetEnv.";
-        console.error("❌ " + connectionError);
-        return;
+        console.warn("⚠️ MONGODB_URI not found in environment. Using manual fallback.");
+        url = fallbackURI;
+        usedFallback = true;
     }
 
     try {
         connectionStatus = "Connecting...";
-        console.log('📡 Attempting connection to MongoDB Atlas...');
-        
-        // Added timeouts to prevent hanging connection attempts
         const client = new MongoClient(url, { 
             connectTimeoutMS: 5000, 
             serverSelectionTimeoutMS: 5000 
@@ -110,16 +110,16 @@ async function connectDB() {
 // =================================================================
 
 app.get('/ping', (req, res) => {
-    const envStatus = process.env.MONGODB_URI ? "DETECTED" : "NOT FOUND";
+    const envStatus = process.env.MONGODB_URI ? "DETECTED" : "NOT FOUND (Using Code Fallback)";
     res.send(`
         <h1>System Diagnostic</h1>
         <p><b>Server Status:</b> Running</p>
         <p><b>DB Status:</b> ${connectionStatus}</p>
         <p><b>DB Connected:</b> ${db !== null}</p>
-        <p><b>MONGODB_URI Variable:</b> ${envStatus}</p>
+        <p><b>Environment Variable:</b> ${envStatus}</p>
         <p><b>Error Details:</b> <span style="color:red">${connectionError || 'None'}</span></p>
         <hr>
-        <p><i>Action: If status is 'NOT FOUND', ensure you have added 'SetEnv MONGODB_URI' to your GitHub repo's .htaccess file and redeployed.</i></p>
+        <p><i>Note: If DB Connected is true, you can now log in at /index.</i></p>
     `);
 });
 
@@ -144,7 +144,7 @@ app.get('/setup-admin', async (req, res) => {
 
 app.post('/login', async (req, res) => {
     if (!db) {
-        req.flash('error_msg', `Database not ready (Status: ${connectionStatus}). ${connectionError || ''}`);
+        req.flash('error_msg', `Database not ready. Status: ${connectionStatus}`);
         return res.redirect('/');
     }
     const { username, password } = req.body;
