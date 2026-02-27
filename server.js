@@ -1,8 +1,8 @@
-// BCRYPT SETUP - Using bcryptjs for better compatibility with Hostinger builds
+// BCRYPT SETUP - Pure JS version for Hostinger compatibility
 const bcrypt = require('bcryptjs');
 const saltRounds = 10;
 
-// PORT SETUP - Hostinger assigns a dynamic port
+// PORT SETUP - Dynamic port for Hostinger/Passenger
 const PORT = process.env.PORT || 3000;
 
 // FILE UPLOAD SETUP
@@ -10,33 +10,27 @@ const multer = require('multer');
 const path = require('path');
 const xlsx = require('xlsx');
 
-// Storage for product images
 const imageStorage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, './public/images');
-    },
-    filename: function (req, file, cb) {
-        cb(null, Date.now() + path.extname(file.originalname));
-    }
+    destination: (req, file, cb) => cb(null, './public/images'),
+    filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
 });
 const imageUpload = multer({ storage: imageStorage });
-
-// Memory storage for Excel processing
 const excelImport = multer({ storage: multer.memoryStorage() });
 
 // DATABASE SETUP
 const MongoClient = require('mongodb-legacy').MongoClient;
 const { ObjectId } = require('mongodb-legacy');
-// Falls back to local if environment variable is missing
+
+// Fallback to local only if Environment Variable is missing
 const url = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const client = new MongoClient(url);
 const dbname = 'stockplus';
 
-// EXPRESS & MIDDLEWARE SETUP
-let express = require('express');
-let session = require('express-session');
+// EXPRESS SETUP
+const express = require('express');
+const session = require('express-session');
 const flash = require('connect-flash');
-let bodyParser = require('body-parser');
+const bodyParser = require('body-parser');
 const app = express();
 
 app.use(session({
@@ -51,7 +45,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(flash());
 
-// Pass session and flash data to all templates
+// Middleware: Pass session data to templates
 app.use((req, res, next) => {
     res.locals.success_msg = req.flash('success_msg');
     res.locals.error_msg = req.flash('error_msg');
@@ -61,28 +55,38 @@ app.use((req, res, next) => {
     next();
 });
 
-// START SERVER IMMEDIATELY 
-// This prevents the 503 error on Hostinger/Passenger while the DB connects
-let db;
+// --- DATABASE CONNECTION ---
+let db = null; // Start as null
+
+async function connectDB() {
+    try {
+        console.log('Attempting to connect to MongoDB Atlas...');
+        await client.connect();
+        db = client.db(dbname);
+        console.log('✅ Connected Successfully to MongoDB Atlas');
+    } catch (err) {
+        console.error('❌ CRITICAL DATABASE ERROR:', err.message);
+        // We don't exit(1) here because we want the server to stay up 
+        // and show an error message instead of a 503.
+    }
+}
+
+// Start the database connection in the background
+connectDB();
+
+// START SERVER IMMEDIATELY (Crucial to prevent 503 errors on Hostinger)
 app.listen(PORT, () => {
-    console.log(`✅ StockPlus server is live on Port: ${PORT}`);
+    console.log(`🚀 StockPlus server listening on Port: ${PORT}`);
 });
 
-// CONNECT TO DB IN BACKGROUND
-connectDB();
-async function connectDB(){
-    try {
-        await client.connect();
-        console.log('✅ Connected Successfully to MongoDB Atlas');
-        db = client.db(dbname);
-    } catch (err) {
-        console.error('❌ Database Connection Error:', err);
-    }
-};
+// =================================================================
+// --- ROUTES ---
+// =================================================================
 
-// =================================================================
-// --- PAGE ROUTES ---
-// =================================================================
+// HEALTH CHECK (Test this if you get a 503!)
+app.get('/ping', (req, res) => {
+    res.send(`Server is alive! Database status: ${db ? 'Connected' : 'Connecting...'}`);
+});
 
 // INDEX
 app.get('/', (req, res) => {
@@ -91,9 +95,11 @@ app.get('/', (req, res) => {
 
 const LOW_STOCK_THRESHOLD = 5;
 
-// DASHBOARD
+// DASHBOARD (With database safety check)
 app.get('/dashboard', async (req, res) => {
     if (!req.session.loggedin) return res.redirect('/');
+    if (!db) return res.status(503).send("Database connecting... please refresh in 5 seconds.");
+
     try {
         const totalStock = await db.collection('stock').countDocuments();
         const totalDocuments = await db.collection('documents').countDocuments();
@@ -109,13 +115,15 @@ app.get('/dashboard', async (req, res) => {
             LOW_STOCK_THRESHOLD
         });
     } catch (err) {
-        res.status(500).send("Error loading dashboard.");
+        console.error("Dashboard error:", err);
+        res.status(500).send("Error loading dashboard data.");
     }
 });
 
 // DOCUMENTS LIST
 app.get('/documents', async (req, res) => {
     if (!req.session.loggedin) return res.redirect('/');
+    if (!db) return res.status(503).send("Database connecting...");
     try {
         const docs = await db.collection('documents').find().sort({ "published": -1 }).toArray();
         res.render('pages/documents', { page: 'documents', documents: docs });
@@ -127,6 +135,7 @@ app.get('/documents', async (req, res) => {
 // STOCK LISTING (SEARCH & PAGINATION)
 app.get('/document/:id/stock', async (req, res) => {
     if (!req.session.loggedin) return res.redirect('/');
+    if (!db) return res.status(503).send("Database connecting...");
 
     const documentId = req.params.id;
     const itemsPerPage = 20;
@@ -168,6 +177,7 @@ app.get('/document/:id/stock', async (req, res) => {
 // USERS
 app.get('/users', async (req, res) => {
     if (!req.session.loggedin || req.session.accountType !== 'Admin') return res.redirect('/');
+    if (!db) return res.status(503).send("Database connecting...");
     try {
         const users = await db.collection('users').find().sort({ "created": -1 }).toArray();
         res.render('pages/users', { page: 'users', users });
@@ -188,6 +198,7 @@ app.get('/pos', (req, res) => {
 
 // LOGIN
 app.post('/login', async (req, res) => {
+    if (!db) return res.status(503).send("Database connecting...");
     const { username, password } = req.body;
     try {
         const user = await db.collection('users').findOne({ "login.username": username });
@@ -211,6 +222,7 @@ app.get('/logout', (req, res) => {
 
 // SIGN UP
 app.post('/signUp', async (req, res) => {
+    if (!db) return res.status(503).send("Database connecting...");
     const { email, uname, psw, accountType } = req.body;
     try {
         const exists = await db.collection('users').findOne({ "login.username": uname });
@@ -231,7 +243,7 @@ app.post('/signUp', async (req, res) => {
 
 // CREATE DOC
 app.post('/createDoc', async (req, res) => {
-    if (!req.session.loggedin) return res.redirect('/');
+    if (!req.session.loggedin || !db) return res.redirect('/');
     try {
         await db.collection('documents').insertOne({
             documentName: req.body.documentName,
@@ -247,7 +259,7 @@ app.post('/createDoc', async (req, res) => {
 
 // ADD STOCK
 app.post('/addStock', imageUpload.single('image'), async (req, res) => {
-    if (!req.session.loggedin) return res.redirect('/');
+    if (!req.session.loggedin || !db) return res.redirect('/');
     try {
         const { documentId, productName, productCode, Brand, Category, Qty, RRP, Price, Barcode } = req.body;
         await db.collection('stock').insertOne({
@@ -264,11 +276,11 @@ app.post('/addStock', imageUpload.single('image'), async (req, res) => {
 
 // UPDATE STOCK
 app.post('/updateStock', imageUpload.single('image'), async (req, res) => {
-    if (!req.session.loggedin) return res.redirect('/');
+    if (!req.session.loggedin || !db) return res.redirect('/');
     const { originalBarcode, documentId, currentPage, productName, productCode, Brand, Category, Qty, RRP, Price, Barcode } = req.body;
     try {
         const existing = await db.collection('stock').findOne({ barcode: originalBarcode });
-        let imageUrl = existing.imageUrl;
+        let imageUrl = existing ? existing.imageUrl : null;
         if (req.file) imageUrl = '/images/' + req.file.filename;
 
         await db.collection('stock').updateOne({ barcode: originalBarcode }, {
@@ -286,7 +298,7 @@ app.post('/updateStock', imageUpload.single('image'), async (req, res) => {
 
 // EXCEL IMPORT
 app.post('/import-stock', excelImport.single('stockFile'), async (req, res) => {
-    if (!req.session.loggedin) return res.redirect('/');
+    if (!req.session.loggedin || !db) return res.redirect('/');
     const { documentId } = req.body;
     try {
         const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
@@ -307,37 +319,17 @@ app.post('/import-stock', excelImport.single('stockFile'), async (req, res) => {
     }
 });
 
-// VIEW SELECTED FOR PRINT
-app.post('/selected', async (req, res) => {
-    const { selectedBarcodes, documentId } = req.body;
-    if (!selectedBarcodes) return res.redirect('/documents');
-    const barcodes = Array.isArray(selectedBarcodes) ? selectedBarcodes : [selectedBarcodes];
-    try {
-        const items = await db.collection('stock').find({ barcode: { $in: barcodes } }).toArray();
-        const document = await db.collection('documents').findOne({ _id: new ObjectId(documentId) });
-        res.render('pages/selectedStock', { selectedItems: items, document });
-    } catch (err) {
-        res.redirect('/documents');
-    }
-});
-
-// DELETE
+// DELETE STOCK
 app.post('/delete', async (req, res) => {
+    if (!req.session.loggedin || !db) return res.redirect('/');
     const { barcode, documentId } = req.body;
     await db.collection('stock').deleteOne({ barcode });
     res.redirect(`/document/${documentId}/stock`);
 });
 
-// CASCSADING DELETE DOC
-app.post('/delete-document', async (req, res) => {
-    const { documentId } = req.body;
-    await db.collection('stock').deleteMany({ documentId });
-    await db.collection('documents').deleteOne({ _id: new ObjectId(documentId) });
-    res.redirect('/documents');
-});
-
 // POS SALE
 app.post('/process-sale', async (req, res) => {
+    if (!db) return res.status(503).json({ error: 'DB connecting' });
     const { items } = req.body;
     try {
         for (const item of items) {
@@ -366,6 +358,7 @@ const transporter = nodemailer.createTransport({
 });
 
 cron.schedule('0 9 * * *', async () => {
+    if (!db) return;
     const items = await db.collection('stock').find({ qty: { $lt: LOW_STOCK_THRESHOLD } }).toArray();
     if (items.length > 0) {
         const html = `<ul>${items.map(i => `<li>${i.productName}: ${i.qty}</li>`).join('')}</ul>`;
