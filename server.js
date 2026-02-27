@@ -1,7 +1,8 @@
 /**
- * STOCKPLUS - FULL PRODUCTION SERVER (Final Version)
- * Features: Auth, Pagination, Search, Excel Import, Image Upload, Cron Alerts, POS.
- * Optimized for Hostinger (Ready-First Strategy & Diagnostic Logic).
+ * STOCKPLUS - COMPLETE PRODUCTION SERVER
+ * Features: Auth, Dashboard, Document Mgmt, Paginated/Filtered Stock, 
+ * Image Uploads, Excel Import, POS API, and Automated Daily Alerts.
+ * Optimized for Hostinger.
  */
 
 const bcrypt = require('bcryptjs'); 
@@ -42,7 +43,7 @@ const excelImport = multer({ storage: multer.memoryStorage() });
 
 // --- 3. MIDDLEWARE ---
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'stockplus-fallback-secret',
+    secret: process.env.SESSION_SECRET || 'stockplus-prod-secret-key',
     resave: false,
     saveUninitialized: false
 }));
@@ -53,6 +54,7 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(flash());
 
+// Pass variables to all EJS templates
 app.use((req, res, next) => {
     res.locals.success_msg = req.flash('success_msg');
     res.locals.error_msg = req.flash('error_msg');
@@ -66,33 +68,26 @@ app.use((req, res, next) => {
 let db = null;
 let connectionError = null;
 let connectionStatus = "Disconnected";
-let usedFallback = false;
 
-// 🚀 Ready-First: Start server immediately to pass Hostinger health check
+// 🚀 Ready-First Strategy: Listen immediately to pass Hostinger health checks
 app.listen(PORT, () => {
     console.log(`✅ StockPlus listening on Port: ${PORT}`);
     connectDB();
 });
 
 async function connectDB() {
-    // 🛠️ FALLBACK LOGIC: If Hostinger environment fails, we use this string.
-    const fallbackURI = "mongodb+srv://stuartiek_db_user:Zwq6xp7NR3Ho2W1W@cluster0.blm5m.mongodb.net/stockplus?retryWrites=true&w=majority";
-    
-    let url = process.env.MONGODB_URI;
-    
-    if (!url) {
-        console.warn("⚠️ MONGODB_URI not found in environment. Using manual fallback.");
-        url = fallbackURI;
-        usedFallback = true;
-    }
+    // Standard connection string fallback (used if SRV fails)
+    const fallbackURI = "mongodb+srv://stuartiek_db_user:Zwq6xp7NR3Ho2W1W@cluster0.blmfv8d.mongodb.net/stockplus?retryWrites=true&w=majority";
+    let url = process.env.MONGODB_URI || fallbackURI;
 
     try {
         connectionStatus = "Connecting...";
         const client = new MongoClient(url, { 
-            connectTimeoutMS: 5000, 
-            serverSelectionTimeoutMS: 5000 
+            connectTimeoutMS: 15000, 
+            serverSelectionTimeoutMS: 15000,
+            useNewUrlParser: true,
+            useUnifiedTopology: true
         });
-
         await client.connect();
         db = client.db(dbname);
         connectionError = null;
@@ -110,43 +105,32 @@ async function connectDB() {
 // =================================================================
 
 app.get('/ping', (req, res) => {
-    const envStatus = process.env.MONGODB_URI ? "DETECTED" : "NOT FOUND (Using Code Fallback)";
-    res.send(`
-        <h1>System Diagnostic</h1>
-        <p><b>Server Status:</b> Running</p>
-        <p><b>DB Status:</b> ${connectionStatus}</p>
-        <p><b>DB Connected:</b> ${db !== null}</p>
-        <p><b>Environment Variable:</b> ${envStatus}</p>
-        <p><b>Error Details:</b> <span style="color:red">${connectionError || 'None'}</span></p>
-        <hr>
-        <p><i>Note: If DB Connected is true, you can now log in at /index.</i></p>
-    `);
+    res.send(`<h1>System Diagnostic</h1><p><b>DB Status:</b> ${connectionStatus}</p><p><b>DB Connected:</b> ${db !== null}</p><p><b>Error Details:</b> <span style="color:red">${connectionError || 'None'}</span></p>`);
 });
 
 app.get('/', (req, res) => res.render('pages/index'));
 
-// 🛠️ EMERGENCY SETUP ROUTE
 app.get('/setup-admin', async (req, res) => {
-    if (!db) return res.send(`DB not connected. Current Status: ${connectionStatus}. Error: ${connectionError || 'Connecting...'}`);
+    if (!db) return res.send(`DB not connected. Status: ${connectionStatus}`);
     const pass = "&99398V4oa&";
     try {
         const hash = await bcrypt.hash(pass, 10);
-        await db.collection('users').deleteOne({ "login.username": "stuartiek" });
-        await db.collection('users').insertOne({
-            "email": "stuartiek@gmail.com",
-            "login": { "username": "stuartiek", "password": hash },
-            "accountType": "Admin",
-            "created": new Date().toISOString()
-        });
-        res.send(`✅ Admin 'stuartiek' reset with password: ${pass}`);
+        await db.collection('users').updateOne(
+            { "login.username": "stuartiek" },
+            { $set: { 
+                "email": "stuartiek@gmail.com",
+                "login": { "username": "stuartiek", "password": hash },
+                "accountType": "Admin",
+                "created": new Date().toISOString()
+            }},
+            { upsert: true }
+        );
+        res.send(`✅ Admin 'stuartiek' created/reset successfully.`);
     } catch (e) { res.status(500).send("Error: " + e.message); }
 });
 
 app.post('/login', async (req, res) => {
-    if (!db) {
-        req.flash('error_msg', `Database not ready. Status: ${connectionStatus}`);
-        return res.redirect('/');
-    }
+    if (!db) return res.status(503).send("Database connecting...");
     const { username, password } = req.body;
     try {
         const user = await db.collection('users').findOne({ "login.username": username });
@@ -156,7 +140,7 @@ app.post('/login', async (req, res) => {
             req.session.accountType = user.accountType;
             return res.redirect('/dashboard');
         }
-        req.flash('error_msg', 'Invalid username or password.');
+        req.flash('error_msg', 'Invalid credentials');
         res.redirect('/');
     } catch (err) { res.redirect('/'); }
 });
@@ -176,8 +160,14 @@ app.get('/dashboard', async (req, res) => {
         const totalDocuments = await db.collection('documents').countDocuments();
         const totalUsers = await db.collection('users').countDocuments();
         const lowStockItems = await db.collection('stock').find({ qty: { $lt: LOW_STOCK_THRESHOLD } }).toArray();
+
         res.render('pages/dashboard', { 
-            totalStock, totalDocuments, totalUsers, lowStockItems, LOW_STOCK_THRESHOLD 
+            page: 'dashboard', 
+            totalStock, 
+            totalDocuments, 
+            totalUsers, 
+            lowStockItems, 
+            LOW_STOCK_THRESHOLD 
         });
     } catch (err) { res.status(500).send("Dashboard Error"); }
 });
@@ -185,19 +175,14 @@ app.get('/dashboard', async (req, res) => {
 app.get('/documents', async (req, res) => {
     if (!req.session.loggedin || !db) return res.redirect('/');
     try {
-        const docs = await db.collection('documents').find().sort({ "published": -1 }).toArray();
-        res.render('pages/documents', { documents: docs });
+        const documents = await db.collection('documents').find().sort({ "published": -1 }).toArray();
+        res.render('pages/documents', { page: 'documents', documents });
     } catch (err) { res.status(500).send("Documents Error"); }
 });
 
 app.post('/createDoc', async (req, res) => {
     if (!req.session.loggedin || !db) return res.redirect('/');
     try {
-        const count = await db.collection('documents').countDocuments();
-        if (count >= 50) {
-            req.flash('error_msg', 'Maximum limit of 50 documents reached.');
-            return res.redirect('/documents');
-        }
         await db.collection('documents').insertOne({
             documentName: req.body.documentName,
             labelType: req.body.labelType,
@@ -219,7 +204,7 @@ app.post('/delete-document', async (req, res) => {
 });
 
 // =================================================================
-// --- STOCK MANAGEMENT (SEARCH & FILTER) ---
+// --- STOCK MANAGEMENT (PAGINATION / SEARCH / FILTER) ---
 // =================================================================
 
 app.get('/document/:id/stock', async (req, res) => {
@@ -232,7 +217,7 @@ app.get('/document/:id/stock', async (req, res) => {
 
     try {
         const document = await db.collection('documents').findOne({ _id: new ObjectId(id) });
-        if (!document) return res.status(404).send("Not found.");
+        if (!document) return res.status(404).send("Document not found.");
 
         const filter = { documentId: id };
         if (selectedCategory) filter.category = selectedCategory;
@@ -245,7 +230,6 @@ app.get('/document/:id/stock', async (req, res) => {
         }
 
         const totalItems = await db.collection('stock').countDocuments(filter);
-        const totalPages = Math.ceil(totalItems / itemsPerPage);
         const stock = await db.collection('stock').find(filter)
             .sort({ "published": -1 })
             .skip((currentPage - 1) * itemsPerPage)
@@ -253,7 +237,12 @@ app.get('/document/:id/stock', async (req, res) => {
             .toArray();
 
         res.render('pages/documentStock', { 
-            document, stock, selectedCategory, searchQuery, currentPage, totalPages 
+            document, 
+            stock, 
+            selectedCategory, 
+            searchQuery,
+            currentPage, 
+            totalPages: Math.ceil(totalItems / itemsPerPage) 
         });
     } catch (err) { res.status(500).send("Stock Error"); }
 });
@@ -261,13 +250,13 @@ app.get('/document/:id/stock', async (req, res) => {
 app.post('/addStock', imageUpload.single('image'), async (req, res) => {
     if (!req.session.loggedin || !db) return res.redirect('/');
     const { documentId, productName, productCode, Brand, Category, Qty, RRP, Price, Barcode } = req.body;
-    const newItem = {
+    await db.collection('stock').insertOne({
         imageUrl: req.file ? '/images/' + req.file.filename : null,
         productName, productCode, brand: Brand, category: Category,
         qty: parseInt(Qty) || 0, rrp: RRP, price: Price, barcode: Barcode,
-        documentId, published: new Date().toISOString().slice(0, 19)
-    };
-    await db.collection('stock').insertOne(newItem);
+        documentId, published: new Date().toISOString().slice(0, 19),
+        productURL: "/product/" + Barcode, deleteURL: "/delete/" + Barcode
+    });
     res.redirect(`/document/${documentId}/stock`);
 });
 
@@ -280,7 +269,11 @@ app.post('/updateStock', imageUpload.single('image'), async (req, res) => {
         if (req.file) imageUrl = '/images/' + req.file.filename;
 
         await db.collection('stock').updateOne({ barcode: originalBarcode }, {
-            $set: { productName, productCode, brand: Brand, category: Category, qty: parseInt(Qty) || 0, rrp: RRP, price: Price, barcode: Barcode, imageUrl }
+            $set: { 
+                productName, productCode, brand: Brand, category: Category, 
+                qty: parseInt(Qty) || 0, rrp: RRP, price: Price, barcode: Barcode, 
+                imageUrl, productURL: "/product/" + Barcode, deleteURL: "/delete/" + Barcode 
+            }
         });
         res.redirect(`/document/${documentId}/stock?page=${currentPage || 1}#item-${Barcode}`);
     } catch (err) { res.redirect('/documents'); }
@@ -294,7 +287,7 @@ app.post('/delete', async (req, res) => {
 });
 
 // =================================================================
-// --- EXCEL & POS ROUTES ---
+// --- EXCEL, PRINTING, & POS ---
 // =================================================================
 
 app.post('/import-stock', excelImport.single('stockFile'), async (req, res) => {
@@ -306,9 +299,9 @@ app.post('/import-stock', excelImport.single('stockFile'), async (req, res) => {
             productName: row.productName, barcode: String(row.barcode), 
             productCode: row.productCode || '', brand: row.brand || '', category: row.category || 'Misc',
             qty: parseInt(row.qty) || 0, rrp: String(row.rrp || '0.00'), price: String(row.price || '0.00'),
-            documentId: req.body.documentId, published: new Date().toISOString().slice(0, 19)
+            documentId: req.body.documentId, published: new Date().toISOString().slice(0, 19),
+            productURL: "/product/" + String(row.barcode), deleteURL: "/delete/" + String(row.barcode)
         })).filter(i => i.productName && i.barcode);
-
         if (items.length > 0) await db.collection('stock').insertMany(items);
         req.flash('success_msg', `Imported ${items.length} items.`);
         res.redirect('/documents');
@@ -324,7 +317,7 @@ app.post('/selected', async (req, res) => {
         const selectedItems = await db.collection('stock').find({ barcode: { $in: barcodes } }).toArray();
         const document = await db.collection('documents').findOne({ _id: new ObjectId(documentId) });
         res.render('pages/selectedStock', { selectedItems, document });
-    } catch (err) { res.status(500).send("Error fetching selection."); }
+    } catch (err) { res.status(500).send("Error generating labels."); }
 });
 
 app.post('/process-sale', async (req, res) => {
@@ -335,21 +328,16 @@ app.post('/process-sale', async (req, res) => {
             await db.collection('stock').updateOne({ barcode: item.barcode }, { $inc: { qty: -item.quantity } });
         }
         res.status(200).json({ message: 'Success' });
-    } catch (e) { res.status(500).json({ error: 'Sale failed' }); }
+    } catch (e) { res.status(500).json({ error: 'Sale processing failed.' }); }
 });
 
 // =================================================================
-// --- CRON & EMAIL TASKS ---
+// --- AUTOMATED ALERTS (CRON) ---
 // =================================================================
 
 const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || "smtp.hostinger.com", 
-    port: parseInt(process.env.SMTP_PORT) || 465, 
-    secure: true,
-    auth: { 
-        user: process.env.SMTP_USER || 'info@stockplus.abzdigitalgroup.com', 
-        pass: process.env.SMTP_PASS || 'jtdhJ35j26Mfg?2' 
-    }
+    host: "smtp.hostinger.com", port: 465, secure: true,
+    auth: { user: 'info@stockplus.abzdigitalgroup.com', pass: 'jtdhJ35j26Mfg?2' }
 });
 
 cron.schedule('0 9 * * *', async () => {
@@ -357,15 +345,15 @@ cron.schedule('0 9 * * *', async () => {
     try {
         const low = await db.collection('stock').find({ qty: { $lt: LOW_STOCK_THRESHOLD } }).toArray();
         if (low.length > 0) {
-            const html = `<ul>${low.map(i => `<li>${i.productName}: ${i.qty}</li>`).join('')}</ul>`;
+            const html = `<ul>${low.map(i => `<li><b>${i.productName}</b>: ${i.qty} left</li>`).join('')}</ul>`;
             await transporter.sendMail({
-                from: `"StockPlus Alerts" <${process.env.SMTP_USER || 'info@stockplus.abzdigitalgroup.com'}>`,
+                from: '"StockPlus Alerts" <info@stockplus.abzdigitalgroup.com>',
                 to: 'stuartiek@gmail.com',
                 subject: `🚨 Low Stock Alert - ${low.length} Items`,
-                html: `<h1>Low Stock Report</h1>${html}`
+                html: `<h1>Daily Low Stock Report</h1>${html}<p>Please review inventory levels.</p>`
             });
         }
     } catch (e) { console.error('Cron Error:', e.message); }
 }, { timezone: "Europe/London" });
 
-process.on('uncaughtException', (err) => console.error('🔥 FATAL:', err));
+process.on('uncaughtException', (err) => console.error('🔥 FATAL ERROR:', err));
