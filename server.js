@@ -1,8 +1,11 @@
-// BCRYPT SETUP - Using bcryptjs to avoid C++ compilation errors on Hostinger
+// BCRYPT SETUP - Using bcryptjs for maximum compatibility
 const bcrypt = require('bcryptjs');
 const saltRounds = 10;
 
-// PORT SETUP - Let Hostinger/Passenger provide the port. 
+/**
+ * PORT SETUP
+ * We use process.env.PORT. Hostinger/Passenger provides this automatically.
+ */
 const PORT = process.env.PORT || 3000;
 
 // FILE SYSTEM & UPLOAD SETUP
@@ -11,9 +14,11 @@ const path = require('path');
 const fs = require('fs'); 
 const xlsx = require('xlsx');
 
-// 📁 SAFE DIRECTORY CHECK
-// We wrap this in a try-catch so that if permissions block folder creation, 
-// the app doesn't crash (which causes the 503).
+console.log('--- STOCKPLUS STARTUP LOG ---');
+
+// 📁 DIRECTORY SAFETY CHECK
+// We create 'tmp' and 'images' immediately. 
+// Passenger needs 'tmp' to signal restarts.
 const requiredFolders = [
     path.join(__dirname, 'public', 'images'),
     path.join(__dirname, 'tmp') 
@@ -23,10 +28,10 @@ requiredFolders.forEach(dir => {
     try {
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
-            console.log(`✅ Directory verified/created: ${dir}`);
+            console.log(`✅ Folder verified/created: ${path.basename(dir)}`);
         }
     } catch (err) {
-        console.warn(`⚠️ Warning: Could not create directory ${dir}. This may be a permission issue:`, err.message);
+        console.warn(`⚠️ Folder check skipped for ${path.basename(dir)}:`, err.message);
     }
 });
 
@@ -41,7 +46,7 @@ const excelImport = multer({ storage: multer.memoryStorage() });
 const MongoClient = require('mongodb-legacy').MongoClient;
 const { ObjectId } = require('mongodb-legacy');
 
-// Prioritize Hostinger Environment Variable, fallback to local for development
+// Check if URI exists
 const url = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const client = new MongoClient(url);
 const dbname = 'stockplus';
@@ -54,7 +59,7 @@ const bodyParser = require('body-parser');
 const app = express();
 
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'stockplus-fallback-secret',
+    secret: process.env.SESSION_SECRET || 'stockplus-emergency-secret',
     resave: false,
     saveUninitialized: false
 }));
@@ -66,7 +71,6 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(flash());
 
-// Pass session/flash data to all views
 app.use((req, res, next) => {
     res.locals.success_msg = req.flash('success_msg');
     res.locals.error_msg = req.flash('error_msg');
@@ -76,21 +80,14 @@ app.use((req, res, next) => {
     next();
 });
 
-// --- SERVER STARTUP ---
-// CRITICAL: We start listening immediately so Hostinger doesn't time out (503).
+// =================================================================
+// --- DATABASE CONNECTION (Background) ---
+// =================================================================
 let db = null; 
-
-app.listen(PORT, () => {
-    console.log(`🚀 StockPlus server is live on Port: ${PORT}`);
-    // Now connect to the database in the background
-    connectDB();
-});
 
 async function connectDB() {
     try {
-        const maskedUrl = url.replace(/:([^:@]{1,})@/, ':****@');
-        console.log(`Attempting connection to database...`);
-        
+        console.log('📡 Attempting MongoDB Atlas connection...');
         await client.connect();
         db = client.db(dbname);
         console.log('✅ Connected Successfully to MongoDB Atlas');
@@ -103,10 +100,9 @@ async function connectDB() {
 // --- ROUTES ---
 // =================================================================
 
-// 🛰️ HEALTH CHECK ROUTE
-// If you get a 503, try visiting /ping. If it loads, the server is fine.
+// 🛰️ HEALTH CHECK (Try visiting /ping if you see a 503)
 app.get('/ping', (req, res) => {
-    res.send(`Server is alive! DB Status: ${db !== null ? 'Connected' : 'Connecting...'}`);
+    res.send(`Server is responding. DB Status: ${db !== null ? 'Connected' : 'Connecting...'}`);
 });
 
 // INDEX
@@ -119,7 +115,7 @@ const LOW_STOCK_THRESHOLD = 5;
 // DASHBOARD
 app.get('/dashboard', async (req, res) => {
     if (!req.session.loggedin) return res.redirect('/');
-    if (!db) return res.status(503).send("Database is still connecting... please refresh in 5 seconds.");
+    if (!db) return res.status(503).send("Database is still connecting. Please refresh.");
 
     try {
         const totalStock = await db.collection('stock').countDocuments();
@@ -132,7 +128,7 @@ app.get('/dashboard', async (req, res) => {
             totalStock, totalDocuments, totalUsers, lowStockItems, LOW_STOCK_THRESHOLD
         });
     } catch (err) {
-        res.status(500).send("Error loading dashboard.");
+        res.status(500).send("Error loading dashboard stats.");
     }
 });
 
@@ -147,14 +143,12 @@ app.get('/documents', async (req, res) => {
     }
 });
 
-// STOCK MANAGEMENT (SEARCH & PAGINATION)
+// STOCK LISTING
 app.get('/document/:id/stock', async (req, res) => {
     if (!req.session.loggedin || !db) return res.redirect('/');
-
     const documentId = req.params.id;
     const itemsPerPage = 20;
     const selectedCategory = req.query.category || ''; 
-    const searchQuery = req.query.searchQuery || '';
     const currentPage = parseInt(req.query.page) || 1;
 
     try {
@@ -163,13 +157,6 @@ app.get('/document/:id/stock', async (req, res) => {
 
         const filter = { documentId: documentId };
         if (selectedCategory) filter.category = selectedCategory;
-        if (searchQuery) {
-            filter.$or = [
-                { productName: { $regex: searchQuery, $options: 'i' } },
-                { productCode: { $regex: searchQuery, $options: 'i' } },
-                { barcode: { $regex: searchQuery, $options: 'i' } }
-            ];
-        }
 
         const totalItems = await db.collection('stock').countDocuments(filter);
         const totalPages = Math.ceil(totalItems / itemsPerPage);
@@ -181,7 +168,7 @@ app.get('/document/:id/stock', async (req, res) => {
             .toArray();
 
         res.render('pages/documentStock', {
-            document, stock, selectedCategory, searchQuery, currentPage, totalPages
+            document, stock, selectedCategory, currentPage, totalPages
         });
     } catch (err) {
         res.status(500).send("Error loading stock.");
@@ -200,7 +187,7 @@ app.post('/login', async (req, res) => {
             req.session.accountType = user.accountType;
             return res.redirect('/dashboard');
         }
-        req.flash('error_msg', 'Invalid Username or Password');
+        req.flash('error_msg', 'Invalid Credentials');
         res.redirect('/');
     } catch (err) {
         res.redirect('/');
@@ -212,24 +199,34 @@ app.get('/logout', (req, res) => {
     req.session.destroy(() => res.redirect('/'));
 });
 
-// USER CREATION
+// CREATE USER (ADMIN ONLY)
 app.post('/signUp', async (req, res) => {
     if (!db) return res.status(503).send("Database not ready.");
     const { email, uname, psw, accountType } = req.body;
     try {
-        const exists = await db.collection('users').findOne({ "login.username": uname });
-        if (exists) {
-            req.flash('error_msg', 'Username already taken.');
-            return res.redirect('/users');
-        }
         const hash = await bcrypt.hash(psw, saltRounds);
         await db.collection('users').insertOne({
             email, login: { username: uname, password: hash }, accountType, created: new Date().toISOString()
         });
-        req.flash('success_msg', 'User created successfully.');
+        req.flash('success_msg', 'User created.');
         res.redirect('/users');
     } catch (err) {
         res.redirect('/users');
+    }
+});
+
+// CREATE DOC
+app.post('/createDoc', async (req, res) => {
+    if (!req.session.loggedin || !db) return res.redirect('/');
+    try {
+        await db.collection('documents').insertOne({
+            documentName: req.body.documentName,
+            labelType: req.body.labelType,
+            published: new Date().toISOString()
+        });
+        res.redirect('/documents');
+    } catch (err) {
+        res.redirect('/documents');
     }
 });
 
@@ -250,7 +247,7 @@ app.post('/addStock', imageUpload.single('image'), async (req, res) => {
     }
 });
 
-// UPDATE STOCK ITEM
+// UPDATE STOCK
 app.post('/updateStock', imageUpload.single('image'), async (req, res) => {
     if (!req.session.loggedin || !db) return res.redirect('/');
     const { originalBarcode, documentId, currentPage, productName, productCode, Brand, Category, Qty, RRP, Price, Barcode } = req.body;
@@ -265,7 +262,6 @@ app.post('/updateStock', imageUpload.single('image'), async (req, res) => {
                 qty: parseInt(Qty) || 0, rrp: RRP, price: Price, barcode: Barcode, imageUrl
             }
         });
-        req.flash('success_msg', 'Stock updated successfully.');
         res.redirect(`/document/${documentId}/stock?page=${currentPage || 1}#item-${Barcode}`);
     } catch (err) {
         res.redirect(`/document/${documentId}/stock`);
@@ -290,36 +286,51 @@ app.post('/import-stock', excelImport.single('stockFile'), async (req, res) => {
         req.flash('success_msg', `Successfully imported ${items.length} items.`);
         res.redirect('/documents');
     } catch (err) {
-        req.flash('error_msg', 'Excel import failed.');
         res.redirect('/documents');
     }
 });
 
-// DELETE ITEM
-app.post('/delete', async (req, res) => {
-    if (!req.session.loggedin || !db) return res.redirect('/');
-    const { barcode, documentId } = req.body;
-    await db.collection('stock').deleteOne({ barcode });
-    res.redirect(`/document/${documentId}/stock`);
+// VIEW SELECTED
+app.post('/selected', async (req, res) => {
+    const { selectedBarcodes, documentId } = req.body;
+    if (!selectedBarcodes) return res.redirect('/documents');
+    const barcodes = Array.isArray(selectedBarcodes) ? selectedBarcodes : [selectedBarcodes];
+    try {
+        const items = await db.collection('stock').find({ barcode: { $in: barcodes } }).toArray();
+        const document = await db.collection('documents').findOne({ _id: new ObjectId(documentId) });
+        res.render('pages/selectedStock', { selectedItems: items, document });
+    } catch (err) {
+        res.redirect('/documents');
+    }
 });
 
-// POS SALE PROCESSING
+// POS SALE
 app.post('/process-sale', async (req, res) => {
-    if (!db) return res.status(503).json({ error: 'Database connecting' });
+    if (!db) return res.status(503).json({ error: 'DB connecting' });
     const { items } = req.body;
     try {
         for (const item of items) {
             await db.collection('stock').updateOne({ barcode: item.barcode }, { $inc: { qty: -item.quantity } });
         }
-        res.json({ message: 'Sale processed successfully' });
+        res.json({ message: 'Sale processed' });
     } catch (err) {
         res.status(500).json({ error: 'Sale failed' });
     }
 });
 
 // =================================================================
-// --- CRON JOBS (Daily Low Stock Report) ---
+// --- START THE SERVER ---
 // =================================================================
+
+// Connect to DB in the background
+connectDB();
+
+// We put app.listen at the end to ensure all routes are registered first.
+app.listen(PORT, () => {
+    console.log(`✅ StockPlus server is live on Port: ${PORT}`);
+});
+
+// --- CRON JOBS ---
 const cron = require('node-cron');
 const nodemailer = require('nodemailer');
 
@@ -327,10 +338,7 @@ const transporter = nodemailer.createTransport({
     host: "smtp.hostinger.com",
     port: 465,
     secure: true,
-    auth: {
-        user: 'info@stockplus.abzdigitalgroup.com',
-        pass: 'jtdhJ35j26Mfg?2' 
-    }
+    auth: { user: 'info@stockplus.abzdigitalgroup.com', pass: 'jtdhJ35j26Mfg?2' }
 });
 
 cron.schedule('0 9 * * *', async () => {
@@ -342,7 +350,7 @@ cron.schedule('0 9 * * *', async () => {
             await transporter.sendMail({
                 from: '"StockPlus" <info@stockplus.abzdigitalgroup.com>',
                 to: 'stuspam2025@gmail.com',
-                subject: 'StockPlus Alert: Low Stock Items',
+                subject: 'StockPlus Alert',
                 html: html
             });
         }
