@@ -1,0 +1,7 @@
+PassengerAppRoot /home/u216291154/domains/stockplus.online/nodejs
+PassengerAppType node
+PassengerNodejs /opt/alt/alt-nodejs18/root/bin/node
+PassengerStartupFile server.js
+PassengerBaseURI /
+PassengerRestartDir /home/u216291154/domains/stockplus.online/nodejs/tmp
+RewriteRule ^\.builds - [F,L]
