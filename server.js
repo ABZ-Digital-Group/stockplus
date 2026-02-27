@@ -27,9 +27,27 @@ const excelImport = multer({ storage: multer.memoryStorage() });
 // CONNECT TO MONGO
 const MongoClient = require('mongodb-legacy').MongoClient;
 const { ObjectId } = require('mongodb-legacy');
-const url = 'mongodb://127.0.0.1:27017';
+const url = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const client = new MongoClient(url);
-const dbname = 'stockplus';
+const dbname = 'stockplus'; // You can leave this as stockplus!
+
+// ... (leave your middleware the same) ...
+
+// --- DATABASE CONNECTION ---
+let db;
+connectDB();
+async function connectDB(){
+    try {
+        await client.connect();
+        console.log('✅ Connected Successfully to Server');
+        db = client.db(dbname);
+        app.listen(PORT, () => {
+            console.log(`✅ StockPlus server listening on Port: ${PORT}`);
+        });
+    } catch (err) {
+        console.error('❌ CRITICAL ERROR: Could not connect to MongoDB:', err);
+    }
+};
 
 // LOAD NPM PACKAGES
 let express = require('express');
@@ -61,18 +79,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// --- DATABASE CONNECTION ---
-let db;
-connectDB();
-async function connectDB(){
-    await client.connect();
-    console.log('✅ Connected Successfully to Server');
-    db = client.db(dbname);
-    app.listen(PORT, () => {
-        console.log(`✅ StockPlus server listening on Port: ${PORT}`);
-    });
-    
-};
 
 
 
