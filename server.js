@@ -11,21 +11,22 @@ const path = require('path');
 const fs = require('fs'); 
 const xlsx = require('xlsx');
 
-// 📁 DIRECTORY SAFETY CHECK
-// Passenger requires a 'tmp' folder to manage restarts, and we need 'images' for uploads.
+// 📁 SAFE DIRECTORY CHECK
+// We wrap this in a try-catch so that if permissions block folder creation, 
+// the app doesn't crash (which causes the 503).
 const requiredFolders = [
     path.join(__dirname, 'public', 'images'),
     path.join(__dirname, 'tmp') 
 ];
 
 requiredFolders.forEach(dir => {
-    if (!fs.existsSync(dir)) {
-        try {
+    try {
+        if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
-            console.log(`✅ Created missing directory: ${dir}`);
-        } catch (err) {
-            console.error(`❌ Error creating directory ${dir}:`, err.message);
+            console.log(`✅ Directory verified/created: ${dir}`);
         }
+    } catch (err) {
+        console.warn(`⚠️ Warning: Could not create directory ${dir}. This may be a permission issue:`, err.message);
     }
 });
 
@@ -88,7 +89,7 @@ app.listen(PORT, () => {
 async function connectDB() {
     try {
         const maskedUrl = url.replace(/:([^:@]{1,})@/, ':****@');
-        console.log(`Attempting connection to: ${maskedUrl}`);
+        console.log(`Attempting connection to database...`);
         
         await client.connect();
         db = client.db(dbname);
@@ -103,8 +104,9 @@ async function connectDB() {
 // =================================================================
 
 // 🛰️ HEALTH CHECK ROUTE
+// If you get a 503, try visiting /ping. If it loads, the server is fine.
 app.get('/ping', (req, res) => {
-    res.send(`Server is alive! DB Connected: ${db !== null}`);
+    res.send(`Server is alive! DB Status: ${db !== null ? 'Connected' : 'Connecting...'}`);
 });
 
 // INDEX
@@ -117,7 +119,7 @@ const LOW_STOCK_THRESHOLD = 5;
 // DASHBOARD
 app.get('/dashboard', async (req, res) => {
     if (!req.session.loggedin) return res.redirect('/');
-    if (!db) return res.status(503).send("Database connecting... please refresh in a few seconds.");
+    if (!db) return res.status(503).send("Database is still connecting... please refresh in 5 seconds.");
 
     try {
         const totalStock = await db.collection('stock').countDocuments();
