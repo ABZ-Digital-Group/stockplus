@@ -119,7 +119,7 @@ app.get('/ping', (req, res) => {
         <p><b>MONGODB_URI Variable:</b> ${envStatus}</p>
         <p><b>Error Details:</b> <span style="color:red">${connectionError || 'None'}</span></p>
         <hr>
-        <p><i>Action: If status is 'NOT FOUND', ensure you have SetEnv MONGODB_URI in your .htaccess file.</i></p>
+        <p><i>Action: If status is 'NOT FOUND', ensure you have added 'SetEnv MONGODB_URI' to your GitHub repo's .htaccess file and redeployed.</i></p>
     `);
 });
 
